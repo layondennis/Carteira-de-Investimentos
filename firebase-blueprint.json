@@ -1,0 +1,59 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "User ID" },
+        "displayName": { "type": "string", "description": "User display name" },
+        "email": { "type": "string", "description": "User email" },
+        "photoURL": { "type": "string", "description": "User photo URL" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
+      },
+      "required": ["uid", "email"]
+    },
+    "PortfolioAsset": {
+      "title": "Portfolio Asset",
+      "description": "An asset in the user's portfolio",
+      "type": "object",
+      "properties": {
+        "symbol": { "type": "string", "description": "Ticker symbol (e.g., PETR4)" },
+        "type": { "type": "string", "enum": ["Ação", "FII", "BDR", "ETF"], "description": "Asset type" },
+        "sector": { "type": "string", "description": "Asset sector" },
+        "segment": { "type": "string", "description": "Asset segment" },
+        "quantity": { "type": "number", "description": "Quantity owned" },
+        "averagePrice": { "type": "number", "description": "Average purchase price" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" }
+      },
+      "required": ["symbol", "type", "quantity", "averagePrice", "sector"]
+    },
+    "PriceAlert": {
+      "title": "Price Alert",
+      "description": "A user-defined price alert",
+      "type": "object",
+      "properties": {
+        "symbol": { "type": "string", "description": "Ticker symbol" },
+        "targetPrice": { "type": "number", "description": "Target price for alert" },
+        "condition": { "type": "string", "enum": ["above", "below"], "description": "Alert condition" },
+        "active": { "type": "boolean", "description": "Whether the alert is active" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
+      },
+      "required": ["symbol", "targetPrice", "condition"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Individual user profiles"
+    },
+    "/users/{userId}/portfolio/{assetId}": {
+      "schema": "PortfolioAsset",
+      "description": "User's portfolio assets"
+    },
+    "/users/{userId}/alerts/{alertId}": {
+      "schema": "PriceAlert",
+      "description": "User's price alerts"
+    }
+  }
+}

@@ -1,0 +1,93 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: /users/{userId}
+    // Document ID: userId (Firebase Auth UID)
+    // Fields:
+    //   - uid: string (required)
+    //   - displayName: string (optional)
+    //   - email: string (required)
+    //   - photoURL: string (optional)
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: /users/{userId}/portfolio/{assetId}
+    // Fields:
+    //   - symbol: string (required)
+    //   - type: string (required, enum: Ação, FII, BDR, ETF)
+    //   - quantity: number (required, positive)
+    //   - averagePrice: number (required, positive)
+    //   - updatedAt: timestamp (required)
+    //
+    // Collection: /users/{userId}/alerts/{alertId}
+    // Fields:
+    //   - symbol: string (required)
+    //   - targetPrice: number (required, positive)
+    //   - condition: string (required, enum: above, below)
+    //   - active: bool (required)
+    //   - createdAt: timestamp (required)
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Domain Validators
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt']) &&
+             data.uid == request.auth.uid &&
+             data.email is string &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidAsset(data) {
+      return data.keys().hasAll(['symbol', 'type', 'quantity', 'averagePrice', 'updatedAt', 'sector']) &&
+             data.symbol is string && data.symbol.size() > 0 && data.symbol.size() < 10 &&
+             data.type in ['Ação', 'FII', 'BDR', 'ETF'] &&
+             data.sector is string && data.sector.size() > 0 &&
+             (!('segment' in data) || data.segment is string) &&
+             data.quantity is number && data.quantity >= 0 &&
+             data.averagePrice is number && data.averagePrice >= 0 &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidAlert(data) {
+      return data.keys().hasAll(['symbol', 'targetPrice', 'condition', 'active', 'createdAt']) &&
+             data.symbol is string && data.symbol.size() > 0 && data.symbol.size() < 10 &&
+             data.targetPrice is number && data.targetPrice >= 0 &&
+             data.condition in ['above', 'below'] &&
+             data.active is bool &&
+             data.createdAt is timestamp;
+    }
+
+    // Rules
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data);
+      
+      match /portfolio/{assetId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidAsset(request.resource.data);
+        allow update: if isOwner(userId) && isValidAsset(request.resource.data);
+        allow delete: if isOwner(userId);
+      }
+      
+      match /alerts/{alertId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidAlert(request.resource.data);
+        allow update: if isOwner(userId) && isValidAlert(request.resource.data);
+        allow delete: if isOwner(userId);
+      }
+    }
+  }
+}
