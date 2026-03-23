@@ -156,7 +156,8 @@ const App: React.FC = () => {
 
   // Auth
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    // Firebase Auth
+    const unsubscribeFirebase = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
         const profile = await getUserProfile(currentUser.uid);
@@ -173,7 +174,30 @@ const App: React.FC = () => {
       }
       setLoading(false);
     });
-    return () => unsubscribe();
+
+    // Supabase Auth
+    const checkSupabaseSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        setSupabaseUser(session.user);
+        setUseSupabase(true);
+      }
+    };
+    checkSupabaseSession();
+
+    const { data: { subscription: supabaseSubscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        setSupabaseUser(session.user);
+        setUseSupabase(true);
+      } else {
+        setSupabaseUser(null);
+      }
+    });
+
+    return () => {
+      unsubscribeFirebase();
+      supabaseSubscription.unsubscribe();
+    };
   }, []);
 
   // Real-time data subscriptions
@@ -220,22 +244,32 @@ const App: React.FC = () => {
   const handleLogin = async () => {
     const provider = new GoogleAuthProvider();
     try {
+      setLoading(true);
       await signInWithPopup(auth, provider);
-    } catch (err) {
+      // onAuthStateChanged will handle the rest
+    } catch (err: any) {
       console.error('Login error', err);
+      // If we had a local error state we would set it here
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleLogout = async () => {
     try {
+      setLoading(true);
       if (useSupabase) {
         await supabase.auth.signOut();
         setSupabaseUser(null);
       } else {
         await signOut(auth);
+        setUser(null);
       }
+      setActiveTab('dashboard');
     } catch (err) {
       console.error('Logout error', err);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -356,7 +390,12 @@ const App: React.FC = () => {
 
           <div className="p-4 border-t border-zinc-800/50">
             <div className="flex items-center gap-3 p-2 rounded-xl hover:bg-zinc-800/50 transition-colors cursor-pointer group" onClick={handleLogout}>
-              <img src={activeUser.photoURL || activeUser.user_metadata?.avatar_url || `https://ui-avatars.com/api/?name=${activeUser.email}`} alt="User" className="w-10 h-10 rounded-full border border-zinc-700" />
+              <img 
+                src={activeUser.photoURL || activeUser.user_metadata?.avatar_url || `https://ui-avatars.com/api/?name=${activeUser.email}`} 
+                alt="User" 
+                className="w-10 h-10 rounded-full border border-zinc-700 object-cover" 
+                referrerPolicy="no-referrer"
+              />
               <div className="hidden md:block flex-1 overflow-hidden">
                 <p className="text-sm font-medium truncate">{activeUser.displayName || activeUser.email.split('@')[0]}</p>
                 <p className="text-xs text-zinc-500 truncate">{activeUser.email}</p>
@@ -369,15 +408,25 @@ const App: React.FC = () => {
         {/* Main Content */}
         <main className="ml-20 md:ml-64 p-4 md:p-8">
           <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-            <div>
-              <h2 className="text-2xl font-bold tracking-tight">
-                {activeTab === 'dashboard' && 'Visão Geral'}
-                {activeTab === 'portfolio' && 'Minha Carteira'}
-                {activeTab === 'alerts' && 'Alertas de Preço'}
-                {activeTab === 'strategy' && 'Visualização Estratégica'}
-                {activeTab === 'settings' && 'Configurações'}
-              </h2>
-              <p className="text-zinc-500 text-sm">Bem-vindo de volta, {(activeUser.displayName || activeUser.email).split(' ')[0]}.</p>
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-full border-2 border-emerald-500/20 overflow-hidden bg-zinc-900">
+                <img 
+                  src={activeUser.photoURL || activeUser.user_metadata?.avatar_url || `https://ui-avatars.com/api/?name=${activeUser.email}`} 
+                  alt="Profile" 
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold tracking-tight">
+                  {activeTab === 'dashboard' && 'Visão Geral'}
+                  {activeTab === 'portfolio' && 'Minha Carteira'}
+                  {activeTab === 'alerts' && 'Alertas de Preço'}
+                  {activeTab === 'strategy' && 'Visualização Estratégica'}
+                  {activeTab === 'settings' && 'Configurações'}
+                </h2>
+                <p className="text-zinc-500 text-sm">Bem-vindo de volta, {(activeUser.displayName || activeUser.email).split(' ')[0]}.</p>
+              </div>
             </div>
 
             <div className="relative max-w-md w-full">

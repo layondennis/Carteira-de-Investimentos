@@ -38,8 +38,18 @@ export const SupabaseAuth: React.FC<SupabaseAuthProps> = ({ onAuthSuccess }) => 
           email,
           password,
         });
-        if (signInError) throw signInError;
-        if (data.user) onAuthSuccess(data.user);
+        if (signInError) {
+          if (signInError.message.includes('Invalid login credentials')) {
+            throw new Error('E-mail ou senha inválidos');
+          }
+          throw signInError;
+        }
+        if (data.user) {
+          setSuccess('Login realizado com sucesso! Redirecionando...');
+          setTimeout(() => {
+            onAuthSuccess(data.user);
+          }, 1500);
+        }
       }
     } catch (err: any) {
       setError(err.message || 'Ocorreu um erro na autenticação.');

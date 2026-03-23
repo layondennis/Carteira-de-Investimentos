@@ -89,6 +89,18 @@ export const createUserProfile = async (userId: string, data: any) => {
   }
 };
 
+export const updateUserProfile = async (userId: string, data: any) => {
+  const path = `users/${userId}`;
+  try {
+    await updateDoc(doc(db, path), {
+      ...data,
+      updatedAt: Timestamp.now()
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+};
+
 // Portfolio
 export const subscribeToPortfolio = (userId: string, callback: (assets: any[]) => void) => {
   const path = `users/${userId}/portfolio`;

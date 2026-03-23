@@ -11,6 +11,8 @@ import {
 } from 'firebase/auth';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { motion } from 'motion/react';
+import { updateUserProfile } from '../services/firestoreService';
+import { resizeImageToBase64 } from '../lib/imageUtils';
 import { 
   User, 
   Mail, 
@@ -41,9 +43,17 @@ export const UserSettings: React.FC<UserSettingsProps> = ({ user }) => {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   
-  const [photoPreview, setPhotoPreview] = useState<string | null>(user?.photoURL || null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(user?.photoURL || user?.user_metadata?.avatar_url || null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const isFirebaseUser = !!user?.uid;
+  const userId = isFirebaseUser ? user?.uid : user?.id;
+
+  // Sync photo preview when user prop changes
+  React.useEffect(() => {
+    setPhotoPreview(user?.photoURL || user?.user_metadata?.avatar_url || null);
+  }, [user]);
 
   const handleEmailUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -110,8 +120,8 @@ export const UserSettings: React.FC<UserSettingsProps> = ({ user }) => {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 2 * 1024 * 1024) {
-        setError('A imagem deve ter no máximo 2MB.');
+      if (file.size > 5 * 1024 * 1024) {
+        setError('A imagem deve ter no máximo 5MB.');
         return;
       }
       setSelectedFile(file);
@@ -124,7 +134,7 @@ export const UserSettings: React.FC<UserSettingsProps> = ({ user }) => {
   };
 
   const handlePhotoUpload = async () => {
-    if (!selectedFile || !auth.currentUser) return;
+    if (!selectedFile || !userId) return;
     
     setLoading('photo');
     setError(null);
@@ -132,9 +142,9 @@ export const UserSettings: React.FC<UserSettingsProps> = ({ user }) => {
     
     const storage = getFirebaseStorage();
     
-    if (storage) {
+    if (isFirebaseUser && storage) {
       // Try Firebase Storage
-      const storageRef = ref(storage, `avatars/${auth.currentUser.uid}`);
+      const storageRef = ref(storage, `avatars/${userId}`);
       const uploadTask = uploadBytesResumable(storageRef, selectedFile);
       
       uploadTask.on(
@@ -145,25 +155,34 @@ export const UserSettings: React.FC<UserSettingsProps> = ({ user }) => {
           trySupabaseUpload();
         },
         async () => {
-          const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-          await updateProfile(auth.currentUser!, { photoURL: downloadURL });
-          setSuccess('Foto de perfil atualizada via Firebase!');
-          setSelectedFile(null);
-          setLoading(null);
+          try {
+            const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+            await updateProfile(auth.currentUser!, { photoURL: downloadURL });
+            await updateUserProfile(userId, { photoURL: downloadURL });
+            await auth.currentUser?.reload();
+            setPhotoPreview(downloadURL);
+            setSuccess('Foto de perfil atualizada com sucesso!');
+            setSelectedFile(null);
+          } catch (err) {
+            console.error('Error finalizing Firebase upload:', err);
+            trySupabaseUpload();
+          } finally {
+            setLoading(null);
+          }
         }
       );
     } else {
-      // Fallback to Supabase Storage
+      // Fallback or direct to Supabase Storage
       trySupabaseUpload();
     }
   };
 
   const trySupabaseUpload = async () => {
-    if (!selectedFile || !auth.currentUser) return;
+    if (!selectedFile || !userId) return;
     
     try {
       const fileExt = selectedFile.name.split('.').pop();
-      const fileName = `${auth.currentUser.uid}.${fileExt}`;
+      const fileName = `${userId}.${fileExt}`;
       const filePath = `avatars/${fileName}`;
 
       // Upload to Supabase 'avatars' bucket
@@ -171,21 +190,54 @@ export const UserSettings: React.FC<UserSettingsProps> = ({ user }) => {
         .from('avatars')
         .upload(filePath, selectedFile, { upsert: true });
 
-      if (uploadError) throw uploadError;
+      if (uploadError) {
+        if (uploadError.message.includes('not found') || uploadError.message.includes('Bucket')) {
+          console.warn('Supabase bucket not found, falling back to Base64 in database');
+          await handleBase64Fallback();
+          return;
+        }
+        throw uploadError;
+      }
 
       const { data: { publicUrl } } = supabase.storage
         .from('avatars')
         .getPublicUrl(filePath);
 
-      await updateProfile(auth.currentUser!, { photoURL: publicUrl });
-      setSuccess('Foto de perfil atualizada via Supabase!');
-      setSelectedFile(null);
+      await savePhotoUrl(publicUrl);
     } catch (err: any) {
-      console.error('Supabase Storage error:', err);
-      setError('Erro ao fazer upload da imagem. Certifique-se de que o bucket "avatars" existe no Supabase.');
+      console.error('Storage error:', err);
+      // Final fallback to Base64 if everything else fails
+      await handleBase64Fallback();
     } finally {
       setLoading(null);
     }
+  };
+
+  const handleBase64Fallback = async () => {
+    if (!selectedFile || !userId) return;
+    try {
+      const base64 = await resizeImageToBase64(selectedFile, 200, 0.6); // Small size for DB storage
+      await savePhotoUrl(base64);
+      setSuccess('Foto de perfil atualizada (salva localmente no banco de dados).');
+    } catch (err: any) {
+      console.error('Base64 fallback error:', err);
+      setError('Erro ao processar imagem. Tente um arquivo menor.');
+    }
+  };
+
+  const savePhotoUrl = async (url: string) => {
+    if (isFirebaseUser) {
+      await updateProfile(auth.currentUser!, { photoURL: url });
+      await updateUserProfile(userId, { photoURL: url });
+      await auth.currentUser?.reload();
+    } else {
+      const { error: updateError } = await supabase.auth.updateUser({
+        data: { avatar_url: url }
+      });
+      if (updateError) throw updateError;
+    }
+    setPhotoPreview(url);
+    setSelectedFile(null);
   };
 
   return (
