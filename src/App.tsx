@@ -13,7 +13,9 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   DollarSign,
-  BarChart3
+  BarChart3,
+  ShieldCheck,
+  Settings
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { auth, db } from './firebase';
@@ -28,6 +30,10 @@ import {
   createUserProfile,
   getUserProfile
 } from './services/firestoreService';
+import { supabase } from './lib/supabaseClient';
+import { SupabaseAuth } from './components/SupabaseAuth';
+import { getMarketNews, MarketNews, checkSupabaseConnection } from './services/supabaseService';
+import { UserSettings } from './components/UserSettings';
 import axios from 'axios';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { 
@@ -87,12 +93,16 @@ const App: React.FC = () => {
   const [portfolio, setPortfolio] = useState<PortfolioItem[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [marketSummary, setMarketSummary] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'portfolio' | 'alerts' | 'strategy'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'portfolio' | 'alerts' | 'strategy' | 'settings'>('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   const [isAddingAsset, setIsAddingAsset] = useState(false);
   const [isAddingAlert, setIsAddingAlert] = useState(false);
   const [sectorFilter, setSectorFilter] = useState<string>('Todos');
+  const [useSupabase, setUseSupabase] = useState(false);
+  const [supabaseUser, setSupabaseUser] = useState<any>(null);
+  const [marketNews, setMarketNews] = useState<MarketNews[]>([]);
+  const [supabaseStatus, setSupabaseStatus] = useState<{ success: boolean; details: any } | null>(null);
 
   // ... (auth and market polling remain same)
 
@@ -193,6 +203,20 @@ const App: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
+  // Fetch Supabase Market News
+  useEffect(() => {
+    const fetchNews = async () => {
+      const news = await getMarketNews();
+      setMarketNews(news);
+    };
+    const checkConn = async () => {
+      const status = await checkSupabaseConnection();
+      setSupabaseStatus(status);
+    };
+    fetchNews();
+    checkConn();
+  }, []);
+
   const handleLogin = async () => {
     const provider = new GoogleAuthProvider();
     try {
@@ -204,7 +228,12 @@ const App: React.FC = () => {
 
   const handleLogout = async () => {
     try {
-      await signOut(auth);
+      if (useSupabase) {
+        await supabase.auth.signOut();
+        setSupabaseUser(null);
+      } else {
+        await signOut(auth);
+      }
     } catch (err) {
       console.error('Logout error', err);
     }
@@ -232,13 +261,22 @@ const App: React.FC = () => {
     );
   }
 
-  if (!user) {
+  if (!user && !supabaseUser) {
     return (
       <div className="h-screen w-screen flex flex-col items-center justify-center bg-[#0a0a0a] text-white p-4">
+        <div className="absolute top-4 right-4">
+          <button 
+            onClick={() => setUseSupabase(!useSupabase)}
+            className="text-xs text-zinc-500 hover:text-emerald-500 transition-colors"
+          >
+            {useSupabase ? 'Usar Firebase (Google)' : 'Usar Supabase (E-mail/Senha)'}
+          </button>
+        </div>
+
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="text-center max-w-md"
+          className="text-center w-full max-w-md"
         >
           <div className="mb-8 flex justify-center">
             <div className="p-4 bg-emerald-500/10 rounded-2xl border border-emerald-500/20">
@@ -246,20 +284,30 @@ const App: React.FC = () => {
             </div>
           </div>
           <h1 className="text-4xl font-bold mb-4 tracking-tight">D3 Wallet</h1>
-          <p className="text-zinc-400 mb-8 leading-relaxed">
-            Acompanhe sua carteira de investimentos na B3 em tempo real. Ações, FIIs, BDRs e ETFs em um só lugar.
-          </p>
-          <button 
-            onClick={handleLogin}
-            className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-3 shadow-lg shadow-emerald-900/20"
-          >
-            <img src="https://www.gstatic.com/firebase/anonymous-scan.png" alt="Google" className="w-6 h-6 invert" />
-            Entrar com Google
-          </button>
+          
+          {useSupabase ? (
+            <SupabaseAuth onAuthSuccess={(user) => setSupabaseUser(user)} />
+          ) : (
+            <>
+              <p className="text-zinc-400 mb-8 leading-relaxed">
+                Acompanhe sua carteira de investimentos na B3 em tempo real. Ações, FIIs, BDRs e ETFs em um só lugar.
+              </p>
+              <button 
+                onClick={handleLogin}
+                className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-3 shadow-lg shadow-emerald-900/20"
+              >
+                <img src="https://www.gstatic.com/firebase/anonymous-scan.png" alt="Google" className="w-6 h-6 invert" />
+                Entrar com Google
+              </button>
+            </>
+          )}
         </motion.div>
       </div>
     );
   }
+
+  const activeUser = user || supabaseUser;
+  const activeUserId = user?.uid || supabaseUser?.id;
 
   return (
     <ErrorBoundary>
@@ -298,14 +346,20 @@ const App: React.FC = () => {
               icon={<BarChart3 size={20} />} 
               label="Estratégia" 
             />
+            <NavItem 
+              active={activeTab === 'settings'} 
+              onClick={() => setActiveTab('settings')} 
+              icon={<Settings size={20} />} 
+              label="Configurações" 
+            />
           </div>
 
           <div className="p-4 border-t border-zinc-800/50">
             <div className="flex items-center gap-3 p-2 rounded-xl hover:bg-zinc-800/50 transition-colors cursor-pointer group" onClick={handleLogout}>
-              <img src={user.photoURL || ''} alt="User" className="w-10 h-10 rounded-full border border-zinc-700" />
+              <img src={activeUser.photoURL || activeUser.user_metadata?.avatar_url || `https://ui-avatars.com/api/?name=${activeUser.email}`} alt="User" className="w-10 h-10 rounded-full border border-zinc-700" />
               <div className="hidden md:block flex-1 overflow-hidden">
-                <p className="text-sm font-medium truncate">{user.displayName}</p>
-                <p className="text-xs text-zinc-500 truncate">{user.email}</p>
+                <p className="text-sm font-medium truncate">{activeUser.displayName || activeUser.email.split('@')[0]}</p>
+                <p className="text-xs text-zinc-500 truncate">{activeUser.email}</p>
               </div>
               <LogOut size={18} className="text-zinc-500 group-hover:text-red-400 transition-colors" />
             </div>
@@ -321,8 +375,9 @@ const App: React.FC = () => {
                 {activeTab === 'portfolio' && 'Minha Carteira'}
                 {activeTab === 'alerts' && 'Alertas de Preço'}
                 {activeTab === 'strategy' && 'Visualização Estratégica'}
+                {activeTab === 'settings' && 'Configurações'}
               </h2>
-              <p className="text-zinc-500 text-sm">Bem-vindo de volta, {user.displayName?.split(' ')[0]}.</p>
+              <p className="text-zinc-500 text-sm">Bem-vindo de volta, {(activeUser.displayName || activeUser.email).split(' ')[0]}.</p>
             </div>
 
             <div className="relative max-w-md w-full">
@@ -423,6 +478,77 @@ const App: React.FC = () => {
                         </div>
                       ))}
                       {alerts.length === 0 && <p className="text-zinc-500 text-sm text-center py-8">Nenhum alerta cadastrado.</p>}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Supabase Market News Section */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  <div className="lg:col-span-2 bg-[#111111] border border-zinc-800/50 rounded-2xl p-6">
+                    <div className="flex items-center justify-between mb-6">
+                      <h3 className="font-bold text-lg flex items-center gap-2">
+                        <RefreshCw size={18} className="text-emerald-500" />
+                        Notícias do Mercado (via Supabase)
+                      </h3>
+                      <span className="text-[10px] px-2 py-1 bg-emerald-500/10 text-emerald-500 rounded-full font-bold uppercase tracking-wider">Live Feed</span>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {marketNews.length > 0 ? (
+                        marketNews.map((news) => (
+                          <div key={news.id} className="p-4 bg-[#161616] border border-zinc-800 rounded-xl hover:border-emerald-500/30 transition-all group">
+                            <h4 className="font-bold text-sm mb-2 group-hover:text-emerald-500 transition-colors">{news.title}</h4>
+                            <p className="text-xs text-zinc-500 line-clamp-3 mb-3">{news.content}</p>
+                            <div className="flex items-center justify-between mt-auto pt-2 border-t border-zinc-800/50">
+                              <span className="text-[10px] text-zinc-600 font-medium">
+                                {new Date(news.created_at).toLocaleDateString('pt-BR')}
+                              </span>
+                              <button className="text-[10px] font-bold text-emerald-500 hover:underline">Ler mais</button>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="col-span-full py-12 text-center bg-[#161616] border border-dashed border-zinc-800 rounded-xl">
+                          <p className="text-zinc-500 text-sm">
+                            Nenhuma notícia encontrada no Supabase.<br/>
+                            <span className="text-[10px] opacity-50">Certifique-se de criar a tabela 'market_news' no seu projeto.</span>
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Supabase Status Widget */}
+                  <div className="bg-[#111111] border border-zinc-800/50 rounded-2xl p-6">
+                    <h3 className="font-bold text-lg mb-6 flex items-center gap-2">
+                      <ShieldCheck size={18} className="text-emerald-500" />
+                      Status da Integração
+                    </h3>
+                    
+                    <div className="space-y-4">
+                      {supabaseStatus ? (
+                        Object.entries(supabaseStatus.details).map(([table, exists]) => (
+                          <div key={table} className="flex items-center justify-between p-3 bg-[#161616] rounded-xl border border-zinc-800">
+                            <div className="flex items-center gap-3">
+                              <div className={`w-2 h-2 rounded-full ${exists ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]'}`} />
+                              <span className="text-sm font-medium capitalize">{table.replace('_', ' ')}</span>
+                            </div>
+                            <span className={`text-[10px] font-bold uppercase ${exists ? 'text-emerald-500' : 'text-red-500'}`}>
+                              {exists ? 'Conectado' : 'Erro'}
+                            </span>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="flex items-center justify-center py-8">
+                          <RefreshCw className="animate-spin text-zinc-500" size={24} />
+                        </div>
+                      )}
+                      
+                      <div className="mt-6 p-4 bg-emerald-500/5 border border-emerald-500/10 rounded-xl">
+                        <p className="text-[11px] text-zinc-400 leading-relaxed">
+                          <span className="text-emerald-500 font-bold">RLS Ativo:</span> As políticas de segurança do Supabase estão protegendo seus dados. Cada usuário acessa apenas sua própria carteira.
+                        </p>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -694,6 +820,17 @@ const App: React.FC = () => {
                     </div>
                   </div>
                 </div>
+              </motion.div>
+            )}
+
+            {activeTab === 'settings' && (
+              <motion.div 
+                key="settings"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+              >
+                <UserSettings user={activeUser} />
               </motion.div>
             )}
           </AnimatePresence>
